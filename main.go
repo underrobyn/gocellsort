@@ -3,11 +3,17 @@ package main
 import (
 	"encoding/csv"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
+
+	"github.com/joho/godotenv"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 type CSVRow struct {
+	ID            uint `gorm:"primaryKey"`
 	Radio         string
 	MCC           uint16
 	MNC           uint16
@@ -156,7 +162,29 @@ func readAndParseCSV(filePath string) ([][]string, error) {
 }
 
 func main() {
+	err := godotenv.Load()
+
 	filePath := "MLS-full-cell-export-2023-08-16T000000.csv"
+
+	// Get database credentials from environment variables
+	dbUser := os.Getenv("DB_USER")
+	dbPassword := os.Getenv("DB_PASSWORD")
+	dbName := os.Getenv("DB_NAME")
+	dbHost := os.Getenv("DB_HOST")
+	dbSSLMode := os.Getenv("DB_SSLMODE")
+
+	if dbSSLMode == "" {
+		dbSSLMode = "disable"
+	}
+
+	// Construct the DSN
+	dsn := fmt.Sprintf("user=%s password=%s dbname=%s host=%s sslmode=%s", dbUser, dbPassword, dbName, dbHost, dbSSLMode)
+
+	// Create a database connection
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Read and parse the CSV file
 	data, err := readAndParseCSV(filePath)
@@ -180,6 +208,11 @@ func main() {
 		}
 
 		csvRows = append(csvRows, row)
+
+		result := db.Create(&row)
+		if result.Error != nil {
+			log.Fatal(result.Error)
+		}
 	}
 
 	//for _, row := range csvRows {

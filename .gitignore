@@ -1,2 +1,4 @@
 MLS*.csv
 .idea
+
+.env
