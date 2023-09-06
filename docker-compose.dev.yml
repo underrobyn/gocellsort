@@ -1,0 +1,33 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: gocellsort_pg
+    shm_size: '256m'
+    environment:
+      POSTGRES_DB: gocellsort
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: toor
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data:/var/lib/postgresql/data
+    command:
+      -c work_mem=96MB
+      -c min_wal_size=2GB
+      -c max_wal_size=4GB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $$POSTGRES_DB -U $$POSTGRES_USER"]
+      interval: 10s
+      timeout: 120s
+      retries: 10
+
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 8080:8080
+    depends_on:
+      postgres:
+        condition: service_healthy

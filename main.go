@@ -186,6 +186,12 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// AutoMigrate will create the table if it doesn't exist
+	err = db.AutoMigrate(&CSVRow{})
+	if err != nil {
+		return
+	}
+
 	// Read and parse the CSV file
 	data, err := readAndParseCSV(filePath)
 	if err != nil {
