@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strconv"
 
@@ -31,10 +32,31 @@ type CSVRow struct {
 	SectorID      uint16
 }
 
+type EstimatedSite struct {
+	MCC    uint16
+	MNC    uint16
+	Lon    float64
+	Lat    float64
+	ENodeB uint32
+}
+
 func extractSectorAndENB(cid uint64) (sector uint16, enb uint32) {
 	sector = uint16(cid % 256)
 	enb = uint32(cid / 256)
 	return sector, enb
+}
+
+func createMapFromSectors(rows []CSVRow) map[string][]CSVRow {
+	// Create a map to store the CSVRows with component key of mcc + mnc + enodeb
+	csvRowMap := make(map[string][]CSVRow)
+
+	// Populate the map
+	for _, row := range rows {
+		key := fmt.Sprintf("%d-%d-%d", row.MCC, row.MNC, row.ENodeB)
+		csvRowMap[key] = append(csvRowMap[key], row)
+	}
+
+	return csvRowMap
 }
 
 func parseCSVRow(record []string) (CSVRow, error) {
@@ -161,6 +183,110 @@ func readAndParseCSV(filePath string) ([][]string, error) {
 	return records, nil
 }
 
+func writeOutputCSV(rows []CSVRow) {
+	file, err := os.Create("output.csv")
+	if err != nil {
+		fmt.Println("Error creating CSV file:", err)
+		return
+	}
+	defer file.Close()
+
+	// Create a CSV writer
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// Write the header row
+	header := []string{
+		"ID",
+		"Radio",
+		"MCC",
+		"MNC",
+		"TAC",
+		"PCI",
+		"Lon",
+		"Lat",
+		"Range",
+		"Samples",
+		"Changeable",
+		"Created",
+		"Updated",
+		"AverageSignal",
+		"ENodeB",
+		"SectorID",
+	}
+	if err := writer.Write(header); err != nil {
+		fmt.Println("Error writing CSV header:", err)
+		return
+	}
+
+	// Write the data rows
+	for _, row := range rows {
+		if row.MCC != 234 {
+			continue
+		}
+		data := []string{
+			fmt.Sprintf("%d", row.ID),
+			row.Radio,
+			fmt.Sprintf("%d", row.MCC),
+			fmt.Sprintf("%d", row.MNC),
+			fmt.Sprintf("%d", row.TAC),
+			fmt.Sprintf("%d", row.PCI),
+			fmt.Sprintf("%.6f", row.Lon),
+			fmt.Sprintf("%.6f", row.Lat),
+			fmt.Sprintf("%d", row.Range),
+			fmt.Sprintf("%d", row.Samples),
+			fmt.Sprintf("%t", row.Changeable),
+			fmt.Sprintf("%d", row.Created),
+			fmt.Sprintf("%d", row.Updated),
+			fmt.Sprintf("%d", row.AverageSignal),
+			fmt.Sprintf("%d", row.ENodeB),
+			fmt.Sprintf("%d", row.SectorID),
+		}
+
+		if err := writer.Write(data); err != nil {
+			fmt.Println("Error writing CSV data:", err)
+			return
+		}
+	}
+
+	fmt.Println("CSV file 'output.csv' written successfully.")
+}
+
+func writeEstimatedSitesToCSV(sites map[string]EstimatedSite) error {
+	// Create or open the CSV file
+	file, err := os.Create("estimated.csv")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Create a CSV writer
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// Write the CSV header
+	header := []string{"MCC", "MNC", "Lon", "Lat", "ENodeB"}
+	if err := writer.Write(header); err != nil {
+		return err
+	}
+
+	// Write the EstimatedSite data to the CSV file
+	for _, site := range sites {
+		record := []string{
+			fmt.Sprintf("%d", site.MCC),
+			fmt.Sprintf("%d", site.MNC),
+			fmt.Sprintf("%.6f", site.Lon),
+			fmt.Sprintf("%.6f", site.Lat),
+			fmt.Sprintf("%d", site.ENodeB),
+		}
+		if err := writer.Write(record); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func main() {
 	err := godotenv.Load()
 
@@ -206,6 +332,9 @@ func main() {
 		if record[0] != "LTE" {
 			continue
 		}
+		if record[1] != "234" {
+			continue
+		}
 
 		row, err := parseCSVRow(record)
 		if err != nil {
@@ -215,11 +344,51 @@ func main() {
 
 		csvRows = append(csvRows, row)
 
-		result := db.Create(&row)
-		if result.Error != nil {
-			log.Fatal(result.Error)
+		//result := db.Create(&row)
+		//if result.Error != nil {
+		//	log.Fatal(result.Error)
+		//}
+	}
+
+	rowMap := createMapFromSectors(csvRows)
+
+	// Create a map to store the EstimatedSite structs
+	estimatedSites := make(map[string]EstimatedSite)
+
+	// Iterate through the CSVRowMap and calculate EstimatedSites
+	for key, rows := range rowMap {
+		// Initialize variables for weighted average calculation
+		totalWeight := 0.0
+		weightedLatSum := 0.0
+		weightedLonSum := 0.0
+
+		// Calculate weighted average
+		for _, row := range rows {
+			weight := math.Log(float64(row.Samples))
+			totalWeight += weight
+			weightedLatSum += float64(row.Lat) * weight
+			weightedLonSum += float64(row.Lon) * weight
+		}
+
+		// Calculate the estimated coordinates
+		estimatedLat := weightedLatSum / totalWeight
+		estimatedLon := weightedLonSum / totalWeight
+
+		// Create EstimatedSite struct and store in the map
+		estimatedSites[key] = EstimatedSite{
+			MCC:    rows[0].MCC,
+			MNC:    rows[0].MNC,
+			Lat:    estimatedLat,
+			Lon:    estimatedLon,
+			ENodeB: rows[0].ENodeB,
 		}
 	}
+
+	err = writeEstimatedSitesToCSV(estimatedSites)
+	if err != nil {
+		return
+	}
+	writeOutputCSV(csvRows)
 
 	//for _, row := range csvRows {
 	//	fmt.Printf("Radio: %s, MCC: %d, MNC: %d, TAC: %d, PCI: %d, Lon: %f, Lat: %f, Range: %d, Samples: %d, Changeable: %t, Created: %d, Updated: %d, AverageSignal: %d, ENodeB: %d, SectorID: %d\n",
